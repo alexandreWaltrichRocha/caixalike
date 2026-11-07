@@ -2,7 +2,7 @@
 
 > Portal de pagamentos estático — criação de sites, serviços digitais e planos mensais, com **PIX (copia e cola + QR Code)** e **RLUSD (XRPL)**.
 
-[![Deploy](https://img.shields.io/github/actions/workflow/status/alexandreWachRch/caixalike/deploy.yml?label=deploy&style=flat-square)](../../actions)
+[![Deploy](https://img.shields.io/github/actions/workflow/status/alexandreWaltrichRocha/caixalike/deploy.yml?label=deploy&style=flat-square)](../../actions)
 [![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg?style=flat-square)](LICENSE)
 
 ---

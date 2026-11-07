@@ -9,7 +9,7 @@
 # =============================================================
 set -euo pipefail
 
-GITHUB_USER="${1:-alexandreWachRch}"
+GITHUB_USER="${1:-alexandreWaltrichRocha}"
 REPO_NAME="${2:-caixalike}"
 COMMIT_MSG="${3:-chore: atualização do site}"
 REPO_URL="https://github.com/${GITHUB_USER}/${REPO_NAME}.git"
