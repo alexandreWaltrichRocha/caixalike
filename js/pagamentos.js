@@ -1,9 +1,12 @@
 /**
- * CaixaLike — Motor de Pagamentos v4.3
- * PIX EMV + Valor automático por plano/serviço + RLUSD (XRPL)
+ * CaixaLike — Motor de Pagamentos v5.0
+ * PIX EMV (valor + código de pedido no txid) + comprovante via WhatsApp + RLUSD (XRPL)
+ *
+ * Fonte única de preços: atributos data-nome / data-valor no HTML de cada página.
  */
 
 const CONFIG = {
+  whatsapp: "5547984459259",
   pix: {
     chave:     "77e8169e-8a5f-4d6b-92b1-c26b1a9aa910",
     nome:      "AQUILES LABOR",
@@ -15,51 +18,6 @@ const CONFIG = {
       address: "rH5yzozYmmHZdAfHJQwAZyUAJt1uek6gYQ"
     }
   }
-};
-
-const PRECOS = {
-  "Plano Comercial": 299,
-  "Plano Corporativo": 499,
-  "Plano Empresarial": 899,
-  "Plano E-commerce": 1499,
-  "Plano VIP Básico": 29,
-  "Plano VIP Pro": 59,
-  "Plano VIP Anual": 497,
-  "Plano Básico": 29,
-  "Plano Profissional": 49,
-  "Plano Empresarial Mensal": 79,
-  "Plano E-commerce Mensal": 99,
-  "Atualização do site": 20,
-  "Atualização de plugins": 29,
-  "Monitoramento 24/7": 19,
-  "Correção de erros": 29,
-  "Otimização de imagens": 29,
-  "Troca de textos": 10,
-  "Troca de fotos": 10,
-  "Nova seção": 49,
-  "Nova página": 99,
-  "Atualização de portfólio": 29,
-  "Backup semanal": 19,
-  "Backup diário": 29,
-  "Proteção contra ataques": 29,
-  "Recuperação de site hackeado": 99,
-  "Otimização de velocidade": 49,
-  "Compressão de imagens": 29,
-  "Limpeza de cache": 10,
-  "Revisão completa de performance": 99,
-  "SEO básico": 49,
-  "SEO avançado": 99,
-  "Instalação de Pixel Meta": 29,
-  "Instalação Google Analytics": 29,
-  "Criação de landing page": 149,
-  "Criação de logo": 49,
-  "Banner para site": 29,
-  "Configuração de domínio": 29,
-  "Configuração de e-mail profissional": 29,
-  "Instalação de chatbot": 49,
-  "Integração WhatsApp API": 99,
-  "Integração Mercado Pago": 49,
-  "Integração Infitipay": 49
 };
 
 function tlv(id, val) {
@@ -88,7 +46,7 @@ function limparTexto(txt, max) {
     .trim();
 }
 
-function gerarPayload(valor) {
+function gerarPayload(valor, txid) {
   const { chave, nome, cidade, descricao } = CONFIG.pix;
   let p = tlv(0, "01");
   p += tlv(26, tlv(0, "br.gov.bcb.pix") + tlv(1, chave));
@@ -98,10 +56,45 @@ function gerarPayload(valor) {
   p += tlv(58, "BR");
   p += tlv(59, limparTexto(nome, 25));
   p += tlv(60, limparTexto(cidade, 15));
-  p += tlv(62, tlv(5, limparTexto(descricao, 25).replace(/ /g, "") || "***"));
+  p += tlv(62, tlv(5, limparTexto(txid || descricao, 25).replace(/ /g, "") || "***"));
   p += "6304";
   p += crc16(p);
   return p;
+}
+
+// ── PEDIDO ──────────────────────────────────────────────────
+const estado = { codigo: "", nome: "", nomeSel: "", valorSel: null, valor: 0 };
+
+// Código curto sem caracteres ambíguos (sem I, O, 0, 1). Vai no txid do PIX.
+function novoCodigoPedido() {
+  const alfabeto = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"; // 32 símbolos
+  const bytes = new Uint8Array(8);
+  window.crypto.getRandomValues(bytes);
+  return "CL" + Array.from(bytes, b => alfabeto[b % alfabeto.length]).join("");
+}
+
+function montarMensagemWhatsApp() {
+  const valorFmt = estado.valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+  return [
+    "Olá, CaixaLike! Estou enviando o comprovante do meu pedido.",
+    "",
+    "Pedido: " + estado.codigo,
+    "Item: " + estado.nome,
+    "Valor: R$ " + valorFmt,
+    "Forma de pagamento: PIX (se foi RLUSD, informe também o hash da transação)",
+    "",
+    "Segue o comprovante:"
+  ].join("\n");
+}
+
+function atualizarPedido() {
+  const box = document.getElementById("pedidoBox");
+  if (!box) return;
+  const codEl = document.getElementById("pedidoCodigo");
+  const btn   = document.getElementById("btnWpp");
+  if (codEl) codEl.textContent = estado.codigo;
+  if (btn)   btn.href = "https://wa.me/" + CONFIG.whatsapp + "?text=" + encodeURIComponent(montarMensagemWhatsApp());
+  box.hidden = false;
 }
 
 function gerarQR(elementId, texto, tentativa = 0) {
@@ -114,17 +107,29 @@ function gerarQR(elementId, texto, tentativa = 0) {
   }
   el.innerHTML = "";
   new QRCode(el, {
-    text: texto, width: 150, height: 150,
+    text: texto, width: 200, height: 200,
     colorDark: "#000000", colorLight: "#ffffff",
     correctLevel: QRCode.CorrectLevel.M
   });
 }
 
-function atualizarPIX(valor, veioDoInput = false) {
+function atualizarPIX(valor, veioDoInput = false, nome) {
   const num = parseFloat(String(valor).replace(",", "."));
   if (isNaN(num) || num <= 0) return;
 
-  const payload = gerarPayload(num.toFixed(2));
+  if (!veioDoInput) {
+    // Clique em plano/serviço: novo pedido
+    estado.nomeSel  = nome || "";
+    estado.valorSel = nome ? num : null;
+    estado.codigo   = novoCodigoPedido();
+  } else if (!estado.codigo) {
+    estado.codigo = novoCodigoPedido();
+  }
+  const igualAoSelecionado = estado.valorSel !== null && Math.abs(num - estado.valorSel) < 0.005;
+  estado.nome  = igualAoSelecionado ? estado.nomeSel : "Valor personalizado";
+  estado.valor = num;
+
+  const payload = gerarPayload(num.toFixed(2), estado.codigo);
   const valorFmt = num.toLocaleString("pt-BR", { minimumFractionDigits: 2 });
 
   const codeEl  = document.getElementById("pixCodigo");
@@ -143,7 +148,43 @@ function atualizarPIX(valor, veioDoInput = false) {
   if (okEl)    okEl.classList.remove("visible");
   if (btnEl)   { btnEl.textContent = "Copiar"; btnEl.classList.remove("copied"); }
 
+  atualizarPedido();
   setTimeout(() => gerarQR("qrcode-pix", payload), 50);
+}
+
+// Marca o item escolhido, mostra o resumo e gera o PIX.
+// opts: { grupo: seletor dos irmãos, classe: classe de seleção, sufixo: texto após o valor }
+function selecionarItem(el, opts = {}) {
+  const { grupo, classe = "selected", sufixo = "" } = opts;
+  if (grupo) document.querySelectorAll(grupo).forEach(n => {
+    n.classList.remove(classe);
+    if (n.getAttribute("role") === "button") n.setAttribute("aria-pressed", "false");
+  });
+  el.classList.add(classe);
+  if (el.getAttribute("role") === "button") el.setAttribute("aria-pressed", "true");
+
+  const nome  = el.dataset.nome;
+  const valor = parseFloat(el.dataset.valor);
+
+  const pill = document.getElementById("selectedPill");
+  if (pill) {
+    pill.textContent = "";
+    const strong = document.createElement("strong");
+    strong.textContent = nome;
+    pill.append("✓ ", strong, " — R$ " + valor.toLocaleString("pt-BR", { minimumFractionDigits: 2 }) + sufixo);
+    pill.classList.add("visible");
+  }
+
+  atualizarPIX(valor, false, nome);
+
+  const bloco = document.getElementById("bloco-pagamento");
+  if (bloco) {
+    const reduz = !!(window.matchMedia && window.matchMedia("(prefers-reduced-motion: reduce)").matches);
+    setTimeout(() => {
+      bloco.scrollIntoView({ behavior: reduz ? "auto" : "smooth", block: "start" });
+      bloco.focus({ preventScroll: true });
+    }, 100);
+  }
 }
 
 function iniciarPIX() {
@@ -164,6 +205,8 @@ function iniciarPIX() {
     } else {
       const resEl = document.getElementById("pixResult");
       const qrEl  = document.getElementById("qrcode-pix");
+      const pedEl = document.getElementById("pedidoBox");
+      if (pedEl) pedEl.hidden = true;
       if (resEl) resEl.classList.remove("visible");
       if (qrEl)  qrEl.innerHTML = "";
     }
@@ -215,9 +258,33 @@ function preencherEnderecos() {
   if (el) el.value = CONFIG.crypto.rlusd.address;
 }
 
+function preencherBeneficiario() {
+  const el = document.getElementById("pixBenef");
+  if (el) el.textContent = "No app do banco, o recebedor aparecerá como " + limparTexto(CONFIG.pix.nome, 25) + ".";
+}
+
+// Cards de plano (sem botão interno) e linhas da tabela de serviços ficam
+// focáveis e acionáveis por Enter/Espaço.
+function habilitarTeclado() {
+  document.querySelectorAll(".plano-card[data-valor], #tabela-servicos tr[data-valor]").forEach(el => {
+    el.tabIndex = 0;
+    if (el.classList.contains("plano-card")) {
+      const v = parseFloat(el.dataset.valor).toLocaleString("pt-BR", { minimumFractionDigits: 2 });
+      el.setAttribute("role", "button");
+      el.setAttribute("aria-pressed", "false");
+      el.setAttribute("aria-label", el.dataset.nome + ", R$ " + v + " por mês. Selecionar e pagar.");
+    }
+    el.addEventListener("keydown", e => {
+      if (e.key === "Enter" || e.key === " ") { e.preventDefault(); el.click(); }
+    });
+  });
+}
+
 document.addEventListener("DOMContentLoaded", () => {
   iniciarPIX();
   preencherEnderecos();
+  preencherBeneficiario();
+  habilitarTeclado();
 });
 
 window.copiarPix = copiarPix;
@@ -226,7 +293,7 @@ window.copiarEndereco = copiarEndereco;
 window.CaixaLike = {
   iniciarPIX,
   atualizarPIX,
+  selecionarItem,
   preencherEnderecos,
-  CONFIG,
-  PRECOS
+  CONFIG
 };
